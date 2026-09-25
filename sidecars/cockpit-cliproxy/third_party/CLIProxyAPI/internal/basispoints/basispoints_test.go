@@ -82,12 +82,11 @@ func TestEffortAndUnsupportedCapabilities(t *testing.T) {
 	}
 	for _, patch := range []object{
 		{"reasoning": object{"effort": "unknown"}},
-		{"reasoning": object{"mode": "pro"}},
 		{"tools": []any{object{"type": "unknown_hosted_tool"}}},
-		{"tool_choice": "required"},
+		{"tool_choice": object{"type": "image_generation"}},
 		{"previous_response_id": "resp_missing"},
 		{"input": []any{object{"role": "user", "content": []any{object{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}}}}},
-		{"text": object{"format": object{"type": "json_schema"}}},
+		{"text": object{"format": object{"type": "grammar"}}},
 	} {
 		source := testSource()
 		for k, v := range patch {

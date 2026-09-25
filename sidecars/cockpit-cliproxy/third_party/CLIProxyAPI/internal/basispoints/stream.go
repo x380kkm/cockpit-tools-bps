@@ -10,7 +10,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+// keepaliveInterval 是扣留工具事件期间两次下游写出的最长间隔。
+var keepaliveInterval = 10 * time.Second
 
 type protocolError struct{ error }
 
@@ -51,6 +55,7 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 	pendingTools := make(map[string]pendingTool)
 	doneCount := 0
 	toolKey := func(item object) string { return text(item["call_id"]) + "\x00" + text(item["id"]) }
+	lastWrite := time.Now()
 	emit := func(kind string, payload object) error {
 		payload["type"] = kind
 		payload["sequence_number"] = sequence
@@ -59,7 +64,17 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 		if err != nil {
 			return err
 		}
+		lastWrite = time.Now()
 		_, err = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", kind, raw)
+		return err
+	}
+	//// 扣留工具事件期间按间隔写出 SSE 注释，维持下游流的活跃 [@x380kkm 2026-09-25] ////
+	keepalive := func() error {
+		if time.Since(lastWrite) < keepaliveInterval {
+			return nil
+		}
+		lastWrite = time.Now()
+		_, err := io.WriteString(writer, ": keepalive\n\n")
 		return err
 	}
 	emitTool := func(item object, index any) error {
@@ -101,11 +116,11 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 			kind = event
 		}
 		if isToolEvent(kind) {
-			return nil
+			return keepalive()
 		}
 		item, _ := payload["item"].(object)
 		if kind == "response.output_item.added" && isTool(item) {
-			return nil
+			return keepalive()
 		}
 		if kind == "response.output_item.done" && isTool(item) {
 			// The terminal response contains the authoritative native item.
@@ -115,7 +130,7 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 			}
 			pendingTools[toolKey(item)] = pendingTool{item: item, order: doneCount}
 			doneCount++
-			return nil
+			return keepalive()
 		}
 		if response, ok := payload["response"].(object); ok {
 			if kind == "response.completed" {

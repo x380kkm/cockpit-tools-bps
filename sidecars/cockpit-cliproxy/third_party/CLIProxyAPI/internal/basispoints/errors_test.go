@@ -22,11 +22,12 @@ func TestPreparationFailuresExplainThemselvesInChinese(t *testing.T) {
 	}{
 		{`{"model":"gpt-6-astra","input":[{"type":"function_call_output","call_id":"missing","output":"x"}]}`, "tool_history", "新建会话"},
 		{`{"model":"gpt-6-astra","input":[{"role":"user","content":[{"type":"input_image","image_url":"http://example.com/a.png"}]}]}`, "image_input", "HTTPS 图片"},
-		{`{"model":"gpt-6-astra","input":"hi","tool_choice":"required"}`, "tool_choice", "auto 或 none"},
+		{`{"model":"gpt-6-astra","input":"hi","tool_choice":{"type":"image_generation"}}`, "tool_choice", "托管工具"},
+		{`{"model":"gpt-6-astra","input":[{"type":"agent_message","author":"/root","recipient":"/root/a","content":[{"type":"encrypted_content","encrypted_content":"gAAAAABcipher"}]}]}`, "agent_message", "多 agent"},
 		{`{"model":"gpt-6-astra","input":"hi","tools":[{"type":"function"}]}`, "tool_catalog", "工具声明"},
 		{`{"model":"gpt-6-astra","input":"hi","previous_response_id":"resp_1"}`, "history_reference", "完整的对话历史"},
 		{`{"model":"gpt-6-astra","input":[{"type":"configuration_update"}]}`, "reasoning_configuration", "推理设置"},
-		{`{"model":"gpt-6-astra","input":"hi","text":{"format":{"type":"json_schema"}}}`, "output_format", "结构化输出"},
+		{`{"model":"gpt-6-astra","input":"hi","text":{"format":{"type":"grammar"}}}`, "output_format", "结构化输出"},
 		{`{"input":"hi"}`, "model", "model"},
 		{`{"model":`, "request_json", "JSON"},
 		{`{"model":"gpt-6-astra","input":5}`, "request_shape", "不支持的内容"},
@@ -54,11 +55,11 @@ func TestPreparationFailuresExplainThemselvesInChinese(t *testing.T) {
 		"Basispoints image host could not store an image: disk full",
 	} {
 		err := errors.New(detail)
-		if Category(err) != "image_hosting" || !strings.Contains(UserMessage(err), "IMAGE_ASSET_PUBLIC_BASE_URL") || !strings.Contains(UserMessage(err), detail) {
+		if Category(err) != "image_hosting" || !strings.Contains(UserMessage(err), "Cloudflare 隧道") || !strings.Contains(UserMessage(err), detail) {
 			t.Fatalf("image hosting failure misclassified: %s → %s", Category(err), UserMessage(err))
 		}
 	}
-	if err := errors.New("Basispoints embedded image payload is not a recognized image format"); Category(err) != "image_input" || !strings.Contains(UserMessage(err), "base64 内嵌图片") {
+	if err := errors.New("Basispoints embedded image payload is not a recognized image format"); Category(err) != "image_input" || !strings.Contains(UserMessage(err), "内嵌图片") {
 		t.Fatalf("undecodable embedded image must stay an image_input rejection: %s", UserMessage(err))
 	}
 }

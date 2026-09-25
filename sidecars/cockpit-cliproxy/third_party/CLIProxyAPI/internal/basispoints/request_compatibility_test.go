@@ -11,12 +11,12 @@ func TestHostedToolOmissionIsExplicitAndDeterministic(t *testing.T) {
 	source := testSource()
 	source["tools"] = []any{object{"type": "function", "name": "get_weather", "parameters": object{"type": "object"}}, object{"type": "web_search"}, object{"type": "image_generation"}}
 	body, bridge := mustPrepare(t, source, "scope", nil)
-	if len(bridge.Warnings) != 1 || !strings.Contains(bridge.Warnings[0], "image_generation, web_search") {
+	if len(bridge.Warnings) != 1 || !strings.Contains(bridge.Warnings[0], "image_generation") || strings.Contains(bridge.Warnings[0], "web_search") {
 		t.Fatalf("missing capability warning: %v", bridge.Warnings)
 	}
 	encoded, _ := json.Marshal(body)
-	if !strings.Contains(string(encoded), "Do not claim to have used them") {
-		t.Fatal("model must know omitted hosted capabilities are unavailable")
+	if !strings.Contains(string(encoded), "Do not claim to have used them") || !strings.Contains(string(encoded), "Native web_search is available") {
+		t.Fatal("model must know omitted hosted capabilities are unavailable and native web search is available")
 	}
 	if _, present := body["tools"]; present {
 		t.Fatal("native schema must not be forwarded")

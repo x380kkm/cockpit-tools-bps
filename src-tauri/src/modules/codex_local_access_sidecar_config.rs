@@ -1631,7 +1631,15 @@ fn sidecar_account_manifest_value(
         "quotaCooldown": account_quota_cooldown(account, now_ms()),
         "subscriptionExpiryMs": resolve_subscription_expiry_ms(account),
         "gptReserveAllowed": account_has_gpt_reserve_entitlement(account),
+        // Basispoints 上游没有生图工具，这些账号一律不参与生图转发。
         "imageGenerationPolicy": match collection.image_generation_account_policies.get(&account.id) {
+            _ if collection
+                .basispoints_account_ids
+                .iter()
+                .any(|item| item == &account.id) =>
+            {
+                "disabled"
+            }
             Some(CodexLocalAccessImageGenerationPolicy::Enabled) => "enabled",
             Some(CodexLocalAccessImageGenerationPolicy::Disabled) => "disabled",
             _ => "inherit",

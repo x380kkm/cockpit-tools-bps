@@ -75,7 +75,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	}
 	body = helps.SetStringIfDifferent(body, "model", baseModel)
 	body = normalizeCodexInstructions(body)
-	useBasispoints := codexBasispointsRouteSelected(ctx, auth, body)
+	useBasispoints := codexBasispointsEnabled(auth)
 	if !useBasispoints && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) {
 		body = ensureImageGenerationTool(body, baseModel, auth, opts.Headers)
 	}
@@ -96,11 +96,13 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	var httpReq *http.Request
 	var upstreamBody []byte
 	var basispointsBridge *basispoints.Bridge
+	var basispointsNotice io.ReadCloser
 	if useBasispoints {
-		httpReq, upstreamBody, basispointsBridge, err = newCodexBasispointsRequest(ctx, auth, body, opts.Headers)
-		if err != nil {
-			return nil, err
+		plan, errPlan := newCodexBasispointsPlan(ctx, auth, baseModel, body, opts.Headers)
+		if errPlan != nil {
+			return nil, errPlan
 		}
+		httpReq, upstreamBody, basispointsBridge, basispointsNotice = plan.request, plan.body, plan.bridge, plan.notice
 		url = basispoints.ResponsesURL
 	} else {
 		httpReq, upstreamBody, identityState, err = e.cacheHelper(ctx, from, url, auth, req, originalPayloadSource, body, opts.Headers)
@@ -136,24 +138,33 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		authLabel = auth.Label
 		authType, authValue = auth.AccountInfo()
 	}
-	helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
-		URL:       url,
-		Method:    http.MethodPost,
-		Headers:   httpReq.Header.Clone(),
-		Body:      upstreamBody,
-		Provider:  e.Identifier(),
-		AuthID:    authID,
-		AuthLabel: authLabel,
-		AuthType:  authType,
-		AuthValue: authValue,
-	})
+	if httpReq != nil {
+		helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
+			URL:       url,
+			Method:    http.MethodPost,
+			Headers:   httpReq.Header.Clone(),
+			Body:      upstreamBody,
+			Provider:  e.Identifier(),
+			AuthID:    authID,
+			AuthLabel: authLabel,
+			AuthType:  authType,
+			AuthValue: authValue,
+		})
+	}
 
-	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
-	httpClient = reporter.TrackHTTPClientRoundTripOnly(httpClient)
-	httpResp, err := httpClient.Do(httpReq)
-	if err != nil {
-		helps.RecordAPIResponseError(ctx, e.cfg, err)
-		return nil, err
+	var httpResp *http.Response
+	if basispointsNotice != nil {
+		// 无法转发的请求以一条助手消息返回，客户端会话继续而不是失败。
+		httpResp = &http.Response{StatusCode: http.StatusOK, Body: basispointsNotice,
+			Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+	} else {
+		httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
+		httpClient = reporter.TrackHTTPClientRoundTripOnly(httpClient)
+		httpResp, err = httpClient.Do(httpReq)
+		if err != nil {
+			helps.RecordAPIResponseError(ctx, e.cfg, err)
+			return nil, err
+		}
 	}
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {

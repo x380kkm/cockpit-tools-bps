@@ -22,6 +22,7 @@ type Bridge struct {
 	Warnings         []string
 	tools            map[string]tool
 	unsupportedTools map[string]bool
+	webSearch        bool
 	replay           *ReplayCache
 	scope            string
 }
@@ -84,10 +85,11 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 		return nil, nil, fmt.Errorf("Basispoints requires expanded history instead of previous_response_id")
 	}
 	requested := text(source["reasoning_effort"])
+	ignoredMode := ""
 	if reasoning, ok := source["reasoning"].(object); ok {
 		requested = text(reasoning["effort"])
 		if mode := text(reasoning["mode"]); mode != "" && mode != "standard" {
-			return nil, nil, fmt.Errorf("Basispoints does not support reasoning mode %q", mode)
+			ignoredMode = mode
 		}
 	}
 	effort, err := NormalizeEffort(requested)
@@ -95,12 +97,19 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 		return nil, nil, err
 	}
 	b := &Bridge{RequestedEffort: requested, Effort: effort, tools: make(map[string]tool), unsupportedTools: make(map[string]bool), replay: replay, scope: scope}
-	choice := source["tool_choice"]
-	if choice != nil && text(choice) != "auto" && text(choice) != "none" {
-		return nil, nil, fmt.Errorf("Basispoints supports tool_choice auto or none only")
+	if ignoredMode != "" {
+		b.Warnings = append(b.Warnings, "reasoning mode "+ignoredMode+" ignored")
+	}
+	choice, choiceDirective, err := normalizeToolChoice(source["tool_choice"])
+	if err != nil {
+		return nil, nil, err
+	}
+	formatDirective, err := structuredOutputDirective(source)
+	if err != nil {
+		return nil, nil, err
 	}
 	var catalog []any
-	if text(choice) != "none" {
+	if choice != "none" {
 		catalog, err = b.collectTools(source["tools"], "")
 		if err != nil {
 			return nil, nil, err
@@ -116,11 +125,6 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 					catalog = append(catalog, additional...)
 				}
 			}
-		}
-	}
-	if format, ok := source["text"].(object); ok {
-		if f, ok := format["format"].(object); ok && text(f["type"]) != "" && text(f["type"]) != "text" {
-			return nil, nil, fmt.Errorf("Basispoints does not support structured output formats")
 		}
 	}
 	var input []any
@@ -166,11 +170,13 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 		warning := "Hosted tools unavailable through Basispoints: " + strings.Join(kinds, ", ")
 		b.Warnings = append(b.Warnings, warning)
 		protocol += "\n" + warning + ". These declarations were omitted. Do not claim to have used them. If the task requires one, explain the limitation or use a suitable declared client tool."
-		if b.omitsWebSearch() {
-			// Explicit live/indexed web search requests route to the original Codex
-			// channel before reaching this bridge; only the default cached declaration
-			// lands here, so the user can opt in.
-			protocol += " If the user needs current web information, say that web search is off on this channel and that enabling Codex live web search (for example the --search flag or web_search = \"live\") turns it on."
+	}
+	if b.webSearch {
+		protocol += "\nNative web_search is available: call it directly whenever the task needs current web information. It is a native tool, not a catalog tool, and needs no run_officejs transport."
+	}
+	for _, directive := range []string{choiceDirective, formatDirective} {
+		if directive != "" {
+			protocol += "\n" + directive
 		}
 	}
 	prologue = append(prologue, message("developer", protocol))

@@ -122,6 +122,10 @@ func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 	if auth == nil {
 		return false
 	}
+	// Basispoints 通道只走 HTTP，WebSocket 会绕过桥接直连原 Codex。
+	if codexBasispointsEnabled(auth) {
+		return false
+	}
 	if len(auth.Attributes) > 0 {
 		if raw := strings.TrimSpace(auth.Attributes["websockets"]); raw != "" {
 			parsed, errParse := strconv.ParseBool(raw)

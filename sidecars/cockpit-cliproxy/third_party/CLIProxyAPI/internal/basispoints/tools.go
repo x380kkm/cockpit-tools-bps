@@ -163,6 +163,10 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 			catalog = append(catalog, nested...)
 			continue
 		}
+		if strings.HasPrefix(kind, "web_search") {
+			b.webSearch = true
+			continue
+		}
 		if isUnsupportedHostedTool(kind) {
 			if b.unsupportedTools == nil {
 				b.unsupportedTools = make(map[string]bool)
@@ -206,14 +210,6 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 	return catalog, nil
 }
 
-func (b *Bridge) omitsWebSearch() bool {
-	for kind := range b.unsupportedTools {
-		if strings.HasPrefix(kind, "web_search") {
-			return true
-		}
-	}
-	return false
-}
 
 // Hosted capabilities cannot be relayed as client function calls. Ignore known
 // declarations in automatic mode; forced selections are rejected by Prepare.
@@ -306,6 +302,12 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 		case "compaction_trigger":
 			trigger = item
 			continue
+		case "agent_message":
+			converted, err := agentMessageAsUserMessage(item)
+			if err != nil {
+				return nil, err
+			}
+			item = converted
 		case "reasoning":
 			if encrypted := text(item["encrypted_content"]); encrypted != "" {
 				result = append(result, object{"type": "reasoning", "summary": []any{}, "encrypted_content": encrypted})
