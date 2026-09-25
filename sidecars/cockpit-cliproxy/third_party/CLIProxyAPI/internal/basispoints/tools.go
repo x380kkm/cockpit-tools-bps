@@ -338,8 +338,8 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 			if err := validateHistoryContent(item["output"]); err != nil {
 				return nil, err
 			}
-			if text(item["id"]) == "" {
-				itemID := "fc_" + id
+			if itemID := text(item["id"]); !strings.HasPrefix(itemID, "fc") || len(itemID) > 64 {
+				itemID = "fc_" + id
 				if len(itemID) > 64 {
 					itemID = "fc_" + fingerprint(id)
 				}

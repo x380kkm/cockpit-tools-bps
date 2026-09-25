@@ -82,7 +82,7 @@ func TestFormattedEnvelopeAndOutputOnlyReplay(t *testing.T) {
 }
 
 func TestToolOutputIDsAreBoundedAndCallerIDsPreserved(t *testing.T) {
-	for _, suppliedID := range []string{"", "caller_output_id"} {
+	for _, suppliedID := range []string{"", "fco_caller_output_id"} {
 		cache := new(ReplayCache)
 		source := testSource()
 		source["tools"] = []any{object{"type": "function", "name": "shell"}}
