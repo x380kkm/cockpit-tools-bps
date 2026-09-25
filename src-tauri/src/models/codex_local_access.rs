@@ -523,6 +523,9 @@ pub struct CodexLocalAccessCollection {
     /// 生图转发账号池：生图请求只允许落到这些 OAuth 账号；为空表示不转发。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_generation_account_ids: Vec<String>,
+    /// Basispoints 账号级开关：这些 OAuth 账号的对话请求改发 ChatGPT for Excel 插件上游。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basispoints_account_ids: Vec<String>,
     #[serde(default)]
     pub gateway_mode: CodexLocalAccessGatewayMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]

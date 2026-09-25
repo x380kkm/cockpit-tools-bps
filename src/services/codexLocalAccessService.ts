@@ -256,6 +256,16 @@ export async function updateCodexLocalAccessGatewayMode(
   });
 }
 
+export async function setCodexLocalAccessAccountBasispoints(
+  accountId: string,
+  enabled: boolean,
+): Promise<CodexLocalAccessState> {
+  return await invoke("codex_local_access_set_account_basispoints", {
+    accountId,
+    enabled,
+  });
+}
+
 export async function updateCodexLocalAccessDebugLogs(
   debugLogs: boolean,
 ): Promise<CodexLocalAccessState> {

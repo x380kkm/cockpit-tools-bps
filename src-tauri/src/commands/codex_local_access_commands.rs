@@ -292,6 +292,15 @@ pub async fn codex_local_access_update_image_generation_accounts(
     codex_local_access::update_local_access_image_generation_accounts(account_ids).await
 }
 
+/// 切换单个 OAuth 账号的 Basispoints（ChatGPT for Excel 插件上游）通道开关。
+#[tauri::command]
+pub async fn codex_local_access_set_account_basispoints(
+    account_id: String,
+    enabled: bool,
+) -> Result<CodexLocalAccessState, String> {
+    codex_local_access::set_local_access_account_basispoints(account_id, enabled).await
+}
+
 #[tauri::command]
 pub async fn codex_local_access_update_access_scope(
     access_scope: CodexLocalAccessScope,

@@ -1291,6 +1291,16 @@ fn sidecar_auth_json_for_account_with_metered_feature_patterns(
         "disable_cooling": collection.disable_cooling,
         "websockets": collection.responses_websockets_enabled,
     });
+    //// 打开 Basispoints 开关的账号写入 basispoints 标记并关闭 WebSocket [@x380kkm 2026-09-25] ////
+    if collection
+        .basispoints_account_ids
+        .iter()
+        .any(|item| item == &account.id)
+    {
+        value["basispoints"] = json!(true);
+        value["websockets"] = json!(false);
+    }
+    //// /打开 Basispoints 开关的账号写入 basispoints 标记并关闭 WebSocket ////
     if let Some(account_id) = account_id {
         value["account_id"] = json!(account_id);
     }
@@ -1626,6 +1636,11 @@ fn sidecar_account_manifest_value(
             Some(CodexLocalAccessImageGenerationPolicy::Disabled) => "disabled",
             _ => "inherit",
         },
+        // 账号的 Basispoints 开关写入 manifest，参与 sidecar 配置指纹
+        "basispoints": collection
+            .basispoints_account_ids
+            .iter()
+            .any(|item| item == &account.id),
     });
     if let Some(quota_reserve) = sidecar_quota_reserve_manifest_value(collection, account) {
         value["quotaReserve"] = quota_reserve;

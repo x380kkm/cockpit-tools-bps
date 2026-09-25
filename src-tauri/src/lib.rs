@@ -1127,6 +1127,7 @@ pub fn run() {
             commands::codex::codex_local_access_update_debug_logs,
             commands::codex::codex_local_access_update_image_generation_model,
             commands::codex::codex_local_access_update_image_generation_accounts,
+            commands::codex::codex_local_access_set_account_basispoints,
             commands::codex::codex_local_access_update_access_scope,
             commands::codex::codex_local_access_update_client_base_url_host,
             commands::codex::codex_local_access_create_api_key,

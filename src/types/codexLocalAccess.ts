@@ -127,6 +127,8 @@ export interface CodexLocalAccessCollection {
   >;
   /** 生图转发账号池：生图与图片编辑请求只交给这些 OAuth 账号执行。 */
   imageGenerationAccountIds?: string[];
+  /** Basispoints 账号级开关：这些 OAuth 账号的对话请求改发 ChatGPT for Excel 插件上游。 */
+  basispointsAccountIds?: string[];
   gatewayMode: CodexLocalAccessGatewayMode;
   upstreamProxyUrl?: string | null;
   routingStrategy: CodexLocalAccessRoutingStrategy;

@@ -1294,6 +1294,7 @@ fn new_empty_local_access_collection() -> Result<CodexLocalAccessCollection, Str
         image_generation_model: DEFAULT_CODEX_IMAGE_GENERATION_MODEL.to_string(),
         image_generation_account_policies: HashMap::new(),
         image_generation_account_ids: Vec::new(),
+        basispoints_account_ids: Vec::new(),
         gateway_mode: CodexLocalAccessGatewayMode::default(),
         upstream_proxy_url: None,
         routing_strategy: CodexLocalAccessRoutingStrategy::default(),

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/basispoints"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
@@ -68,7 +69,8 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	body, _ = sjson.DeleteBytes(body, "safety_identifier")
 	body, _ = sjson.DeleteBytes(body, "stream_options")
 	body = normalizeCodexInstructions(body)
-	if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {
+	useBasispoints := codexBasispointsRouteSelected(ctx, auth, body)
+	if !useBasispoints && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) {
 		body = ensureImageGenerationTool(body, baseModel, auth, opts.Headers)
 	}
 	body = normalizeNonOfficialCodexReasoningItems(ctx, "codex executor", body)
@@ -85,32 +87,43 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
 	var identityState codexIdentityConfuseState
-	httpReq, upstreamBody, identityState, err := e.cacheHelper(ctx, from, url, auth, req, originalPayloadSource, body, opts.Headers)
-	if err != nil {
-		return resp, err
-	}
-	applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg, opts.Headers)
-	if !useFullResponses && liteHeaderValue != "" {
-		httpReq.Header.Set(codexResponsesLiteHeaderName, liteHeaderValue)
-	}
-	applyModelHeaderOverrides(httpReq.Header, baseModel)
-	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
-	if useFullResponses {
-		removeCodexResponsesLiteHeaderForFullResponse(httpReq.Header, true)
-	} else if liteHeaderValue != "" {
-		httpReq.Header.Set(codexResponsesLiteHeaderName, liteHeaderValue)
-	}
-	if !useFullResponses {
-		if liteHeaderValue == "" {
-			if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil && ginCtx.Request.Header.Get(codexResponsesLiteHeaderName) != "" {
-				httpReq.Header.Set(codexResponsesLiteHeaderName, ginCtx.Request.Header.Get(codexResponsesLiteHeaderName))
+	var httpReq *http.Request
+	var upstreamBody []byte
+	var basispointsBridge *basispoints.Bridge
+	if useBasispoints {
+		httpReq, upstreamBody, basispointsBridge, err = newCodexBasispointsRequest(ctx, auth, body, opts.Headers)
+		if err != nil {
+			return resp, err
+		}
+		url = basispoints.ResponsesURL
+	} else {
+		httpReq, upstreamBody, identityState, err = e.cacheHelper(ctx, from, url, auth, req, originalPayloadSource, body, opts.Headers)
+		if err != nil {
+			return resp, err
+		}
+		applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg, opts.Headers)
+		if !useFullResponses && liteHeaderValue != "" {
+			httpReq.Header.Set(codexResponsesLiteHeaderName, liteHeaderValue)
+		}
+		applyModelHeaderOverrides(httpReq.Header, baseModel)
+		applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
+		if useFullResponses {
+			removeCodexResponsesLiteHeaderForFullResponse(httpReq.Header, true)
+		} else if liteHeaderValue != "" {
+			httpReq.Header.Set(codexResponsesLiteHeaderName, liteHeaderValue)
+		}
+		if !useFullResponses {
+			if liteHeaderValue == "" {
+				if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil && ginCtx.Request.Header.Get(codexResponsesLiteHeaderName) != "" {
+					httpReq.Header.Set(codexResponsesLiteHeaderName, ginCtx.Request.Header.Get(codexResponsesLiteHeaderName))
+				}
 			}
 		}
+		if !useFullResponses && liteHeaderValue != "" {
+			httpReq.Header[codexResponsesLiteHeaderName] = []string{liteHeaderValue}
+		}
+		removeCodexResponsesLiteHeaderForAPIKey(httpReq.Header, auth)
 	}
-	if !useFullResponses && liteHeaderValue != "" {
-		httpReq.Header[codexResponsesLiteHeaderName] = []string{liteHeaderValue}
-	}
-	removeCodexResponsesLiteHeaderForAPIKey(httpReq.Header, auth)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
@@ -151,6 +164,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 		err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
 		return resp, err
+	}
+	if basispointsBridge != nil {
+		httpResp.Body = basispointsBridge.Stream(httpResp.Body)
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
 	upstreamData := applyCodexIdentityConfuseResponsePayload(data, identityState)

@@ -84,7 +84,10 @@ import { CodexImageForwardConfig } from "./CodexImageForwardConfig";
 import { buildGrokMemberRowAccounts, CodexGrokBuildQuotaChip, selectCodexLocalAccessMemberRows } from "./codex/codexGrokMemberRows";
 import { PaginationControls } from "./PaginationControls";
 import { CodexStatsRangePicker } from "./CodexStatsRangePicker";
-import { queryCodexLocalAccessStats } from "../services/codexLocalAccessService";
+import {
+  queryCodexLocalAccessStats,
+  setCodexLocalAccessAccountBasispoints,
+} from "../services/codexLocalAccessService";
 import {
   type CodexStatsRangeKey,
   type CodexStatsTimeRange,
@@ -459,6 +462,16 @@ export function CodexLocalAccessModal({
   const testChatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const collection = state?.collection ?? null;
+  //// Basispoints 账号级开关：本地已开启集合与正在切换的账号 [@x380kkm 2026-09-25] ////
+  const [basispointsAccountIds, setBasispointsAccountIds] = useState<Set<string>>(new Set());
+  const [basispointsBusyId, setBasispointsBusyId] = useState<string | null>(null);
+  const basispointsAccountIdsKey = (collection?.basispointsAccountIds ?? []).join("\n");
+  useEffect(() => {
+    setBasispointsAccountIds(
+      new Set(basispointsAccountIdsKey ? basispointsAccountIdsKey.split("\n") : []),
+    );
+  }, [basispointsAccountIdsKey]);
+  //// /Basispoints 账号级开关：本地已开启集合与正在切换的账号 ////
   const apiPortUrl = state?.apiPortUrl ?? "";
   const baseUrl = state?.baseUrl ?? "";
   const displayBaseUrl =
@@ -1734,6 +1747,22 @@ export function CodexLocalAccessModal({
         await handleToggleGrokMember(grokAccount, true);
       }
     })();
+  };
+
+  //// 立即切换单个账号的 Basispoints 开关并回填最新集合 [@x380kkm 2026-09-25] ////
+  const handleToggleBasispoints = async (accountId: string) => {
+    if (basispointsBusyId) return;
+    const enabled = !basispointsAccountIds.has(accountId);
+    setBasispointsBusyId(accountId);
+    setError("");
+    try {
+      const nextState = await setCodexLocalAccessAccountBasispoints(accountId, enabled);
+      setBasispointsAccountIds(new Set(nextState.collection?.basispointsAccountIds ?? []));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBasispointsBusyId(null);
+    }
   };
 
   const handleToggleRestrictFreeAccounts = async () => {
@@ -3631,6 +3660,25 @@ export function CodexLocalAccessModal({
                                     }
                                   />
                                 )}
+                                {!isJoinUnsupported &&
+                                  !grokRowAccount &&
+                                  !isCodexApiKeyAccount(account) && (
+                                    <button
+                                      type="button"
+                                      className={`codex-local-access-member-bps-toggle${
+                                        basispointsAccountIds.has(rowAccountId) ? " is-active" : ""
+                                      }`}
+                                      aria-pressed={basispointsAccountIds.has(rowAccountId)}
+                                      title={t(
+                                        "codex.localAccess.basispoints.desc",
+                                        "开启后该账号的对话请求改走 ChatGPT for Excel（Basispoints）上游；联网搜索、生图、结构化输出、强制工具和内嵌图片请求仍走原 Codex。",
+                                      )}
+                                      disabled={basispointsBusyId !== null}
+                                      onClick={() => void handleToggleBasispoints(rowAccountId)}
+                                    >
+                                      {t("codex.localAccess.basispoints.label", "Excel")}
+                                    </button>
+                                  )}
                                 <span
                                   className={`tier-badge ${presentation.planClass}`}
                                 >

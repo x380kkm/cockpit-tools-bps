@@ -1636,6 +1636,30 @@
   flex: 0 0 112px;
 }
 
+.codex-local-access-member-bps-toggle {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.codex-local-access-member-bps-toggle.is-active {
+  border-color: #107c41;
+  background: #107c41;
+  color: #fff;
+  opacity: 1;
+}
+
+.codex-local-access-member-bps-toggle:disabled {
+  cursor: progress;
+}
+
 .codex-local-access-member-image-policy-dropdown
   .single-select-dropdown-trigger {
   min-height: 30px;

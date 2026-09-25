@@ -13,6 +13,7 @@ fn new_local_access_collection() -> Result<CodexLocalAccessCollection, String> {
         image_generation_model: DEFAULT_CODEX_IMAGE_GENERATION_MODEL.to_string(),
         image_generation_account_policies: HashMap::new(),
         image_generation_account_ids: Vec::new(),
+        basispoints_account_ids: Vec::new(),
         gateway_mode: CodexLocalAccessGatewayMode::default(),
         upstream_proxy_url: None,
         routing_strategy: CodexLocalAccessRoutingStrategy::default(),
@@ -826,6 +827,58 @@ pub async fn update_local_access_image_generation_accounts(
         tauri::async_runtime::spawn_blocking(move || save_collection_to_disk(&collection_to_save))
             .await
             .map_err(|error| format!("保存生图转发账号任务失败: {}", error))??;
+        {
+            let mut runtime = gateway_runtime().lock().await;
+            sync_runtime_collection(&mut runtime, collection);
+        }
+    }
+    ensure_gateway_matches_runtime().await?;
+    snapshot_state().await
+}
+
+//// 切换单个账号的 Basispoints 通道开关 [@x380kkm 2026-09-25] ////
+pub async fn set_local_access_account_basispoints(
+    account_id: String,
+    enabled: bool,
+) -> Result<CodexLocalAccessState, String> {
+    ensure_runtime_loaded().await?;
+
+    let maybe_collection = {
+        let runtime = gateway_runtime().lock().await;
+        runtime.collection.clone()
+    };
+    let Some(mut collection) = maybe_collection else {
+        return Err("本地接入集合尚未创建".to_string());
+    };
+
+    let account_id = account_id.trim().to_string();
+    if enabled {
+        let accounts = codex_account::list_accounts_checked()?;
+        let Some(account) = accounts.iter().find(|item| item.id == account_id) else {
+            return Err("账号不存在".to_string());
+        };
+        if account.is_api_key_auth() || account.is_agent_identity_auth() {
+            return Err("Basispoints 只支持 ChatGPT OAuth 账号".to_string());
+        }
+    }
+
+    let is_enabled = collection
+        .basispoints_account_ids
+        .iter()
+        .any(|item| item == &account_id);
+    if is_enabled != enabled {
+        if enabled {
+            collection.basispoints_account_ids.push(account_id);
+        } else {
+            collection
+                .basispoints_account_ids
+                .retain(|item| item != &account_id);
+        }
+        collection.updated_at = now_ms();
+        let collection_to_save = collection.clone();
+        tauri::async_runtime::spawn_blocking(move || save_collection_to_disk(&collection_to_save))
+            .await
+            .map_err(|error| format!("保存 Basispoints 开关任务失败: {}", error))??;
         {
             let mut runtime = gateway_runtime().lock().await;
             sync_runtime_collection(&mut runtime, collection);
