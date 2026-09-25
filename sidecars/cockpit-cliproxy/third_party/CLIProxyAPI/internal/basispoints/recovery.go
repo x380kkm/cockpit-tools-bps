@@ -17,13 +17,16 @@ import (
 
 var callShapedEnvelope = regexp.MustCompile(`^\s*(?:await\s+)?(?:return\s+)?([A-Za-z_][A-Za-z0-9_.\-]*)\s*\(`)
 
+// hostToolPrefix is the namespace prefix the Excel host shows before tool names.
+const hostToolPrefix = "functions."
+
 // catalogTool resolves a name the model used to a catalog entry, accepting the
 // host's "functions." display prefix the same way direct calls do.
 func (b *Bridge) catalogTool(name string) (string, tool, bool) {
 	if info, ok := b.tools[name]; ok {
 		return name, info, true
 	}
-	if trimmed := strings.TrimPrefix(name, "functions."); trimmed != name {
+	if trimmed := strings.TrimPrefix(name, hostToolPrefix); trimmed != name {
 		if info, ok := b.tools[trimmed]; ok {
 			return trimmed, info, true
 		}
@@ -203,14 +206,4 @@ func customInputText(value any) (string, error) {
 	default:
 		return "", errors.New("Basispoints custom tool input must be a string")
 	}
-}
-
-// isNativeToolLeak reports whether a translation failure means the model called a
-// tool that does not exist for this request, rather than misformatting a real one.
-func isNativeToolLeak(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := err.Error()
-	return strings.Contains(message, "unsupported native tool") || strings.Contains(message, "outside the client's catalog")
 }

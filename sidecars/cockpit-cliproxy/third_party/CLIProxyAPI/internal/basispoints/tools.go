@@ -3,8 +3,8 @@ package basispoints
 import (
 	"container/list"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 )
@@ -421,7 +421,7 @@ func (b *Bridge) translateCall(native object) (object, error) {
 	}
 	_, info, allowed := b.catalogTool(toolName)
 	if !allowed {
-		return nil, fmt.Errorf("Basispoints returned a tool outside the client's catalog")
+		return nil, undeclaredToolError{name: toolName, payload: envelopePayload(envelope)}
 	}
 	result, err := b.finishClientToolCall(native, info, envelope, marked)
 	if err != nil {
@@ -438,13 +438,17 @@ func (b *Bridge) translateCall(native object) (object, error) {
 // this rather than failing the whole response. It relays the client's declared tool
 // call to the client unchanged and never executes any code. Only exact catalog names
 // (optionally carrying a host "functions." display prefix) are accepted; any other
-// native tool remains an unsupported-native-tool error. A declared tool arriving
+// native tool is reported as an undeclared tool. A declared tool arriving
 // under the other item kind is accepted when its payload carries the declared
 // kind's content: JSON-object input for a function, text for a custom tool.
 func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 	_, info, ok := b.catalogTool(text(native["name"]))
 	if !ok {
-		return nil, fmt.Errorf("Basispoints returned an unsupported native tool; no tool was executed")
+		payload := native["arguments"]
+		if text(native["type"]) == "custom_tool_call" {
+			payload = native["input"]
+		}
+		return nil, undeclaredToolError{name: text(native["name"]), payload: payload}
 	}
 	kind := text(native["type"])
 	var envelope object
@@ -553,38 +557,35 @@ func (b *Bridge) finishClientToolCall(native object, info tool, envelope object,
 // call to a tool that does not exist for this request (a host Excel tool such as
 // read_ranges, or an undeclared name) is dropped when the model also answered with
 // assistant text and made no other tool call, so the client still receives the
-// text instead of a failed turn; nothing is executed for the dropped call. Any
-// malformed call to a real client tool still fails the response.
+// text; otherwise it is relayed under its own name so the client reports the tool
+// as unsupported and the model corrects itself. Nothing is executed by the proxy.
+// Any malformed call to a real client tool still fails the response.
 func (b *Bridge) translateResponse(response object) error {
 	if response == nil {
 		return nil
 	}
 	output, _ := response["output"].([]any)
-	kept := make([]any, 0, len(output))
-	var leak error
-	dropped := make([]string, 0)
+	translated := make([]any, 0, len(output))
 	for _, raw := range output {
 		item, _ := raw.(object)
 		if !isTool(item) {
-			kept = append(kept, raw)
+			translated = append(translated, raw)
 			continue
 		}
-		translated, err := b.translateCall(item)
+		result, err := b.translateCall(item)
+		var call undeclaredToolError
+		if errors.As(err, &call) {
+			translated = append(translated, undeclaredCall{native: item, call: call})
+			continue
+		}
 		if err != nil {
-			if !isNativeToolLeak(err) {
-				return err
-			}
-			leak = err
-			dropped = append(dropped, loggableNativeToolName(text(item["name"])))
-			continue
+			return err
 		}
-		kept = append(kept, translated)
+		translated = append(translated, result)
 	}
-	if leak != nil {
-		if !hasAssistantText(kept) || hasToolCalls(kept) {
-			return leak
-		}
-		log.Printf("[Basispoints] stage=stream result=dropped_native_tool count=%d tools=%s", len(dropped), strings.Join(dropped, ","))
+	kept, err := b.resolveUndeclaredCalls(translated)
+	if err != nil {
+		return err
 	}
 	response["output"] = kept
 	response["reasoning"] = object{"effort": b.Effort}

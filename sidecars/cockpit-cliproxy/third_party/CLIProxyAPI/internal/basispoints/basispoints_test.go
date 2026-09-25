@@ -182,24 +182,42 @@ func TestStreamingToolRoundTripPreservesNativeIdentity(t *testing.T) {
 	}
 }
 
-func TestMalformedAndUndeclaredCallsFailWithoutDispatch(t *testing.T) {
+func TestMalformedCallsEndWithNoticeWithoutDispatch(t *testing.T) {
 	source := testSource()
 	source["tools"] = []any{object{"type": "function", "name": "shell"}}
 	for _, native := range []object{
-		nativeCall(object{"name": "delete_workbook", "arguments": object{}}),
 		nativeCall(object{"name": "shell", "tool": "other", "args": object{}}),
 		nativeCall(object{"name": "shell", "arguments": object{}, "args": object{}}),
 		{"type": "function_call", "name": "run_officejs", "arguments": `{"code":"Excel.run(...)"}`},
-		// A direct native call to a tool outside the client's catalog stays rejected;
-		// direct calls to declared tools are recovered separately in direct_call_test.go.
-		{"type": "function_call", "name": "delete_workbook", "arguments": `{}`, "call_id": "call_other"},
 	} {
 		_, bridge := mustPrepare(t, source, "", nil)
 		body := bridge.Stream(io.NopCloser(strings.NewReader(sse(object{"type": "response.completed", "response": object{"output": []any{native}}}))))
 		out, err := io.ReadAll(body)
 		_ = body.Close()
-		if err != nil || !bytes.Contains(out, []byte("response.failed")) || bytes.Contains(out, []byte("response.output_item.added")) {
-			t.Fatalf("unsafe tool was not rejected: %s; %v", out, err)
+		if err != nil || bytes.Contains(out, []byte("response.failed")) || bytes.Contains(out, []byte("response.function_call_arguments")) ||
+			!bytes.Contains(out, []byte(noticeMessageID)) || !bytes.Contains(out, []byte("response.completed")) {
+			t.Fatalf("malformed call must end with a notice and dispatch nothing: %s; %v", out, err)
+		}
+	}
+}
+
+// A call naming a tool outside the client's catalog, through the transport or
+// directly, reaches the client under its own name; direct calls to declared tools
+// are recovered separately in direct_call_test.go.
+func TestUndeclaredCallsRelayUnderTheirOwnName(t *testing.T) {
+	source := testSource()
+	source["tools"] = []any{object{"type": "function", "name": "shell"}}
+	for _, native := range []object{
+		nativeCall(object{"name": "delete_workbook", "arguments": object{}}),
+		{"type": "function_call", "name": "delete_workbook", "arguments": `{}`, "call_id": "call_native"},
+	} {
+		_, bridge := mustPrepare(t, source, "", nil)
+		body := bridge.Stream(io.NopCloser(strings.NewReader(sse(object{"type": "response.completed", "response": object{"output": []any{native}}}))))
+		out, err := io.ReadAll(body)
+		_ = body.Close()
+		if err != nil || bytes.Contains(out, []byte("response.failed")) || bytes.Contains(out, []byte("run_officejs")) ||
+			!bytes.Contains(out, []byte(`"name":"delete_workbook"`)) || !bytes.Contains(out, []byte(`"call_id":"call_native"`)) {
+			t.Fatalf("undeclared call was not relayed under its own name: %s; %v", out, err)
 		}
 	}
 }

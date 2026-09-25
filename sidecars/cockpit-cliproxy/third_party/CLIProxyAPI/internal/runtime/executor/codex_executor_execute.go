@@ -148,8 +148,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	var httpResp *http.Response
 	if basispointsNotice != nil {
 		// 无法转发的请求以一条助手消息返回，客户端会话继续而不是失败。
-		httpResp = &http.Response{StatusCode: http.StatusOK, Body: basispointsNotice,
-			Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+		httpResp = codexBasispointsNoticeResponse(basispointsNotice)
 	} else {
 		httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
 		httpClient = reporter.TrackHTTPClient(httpClient)
@@ -172,9 +171,17 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 			return resp, errClearReplay
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
-		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
-		return resp, err
+		var rejection io.ReadCloser
+		if useBasispoints {
+			rejection = codexBasispointsRejectionNotice(ctx, baseModel, httpResp.StatusCode, b)
+		}
+		if rejection == nil {
+			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+			err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
+			return resp, err
+		}
+		_ = httpResp.Body.Close()
+		httpResp, basispointsBridge = codexBasispointsNoticeResponse(rejection), nil
 	}
 	if basispointsBridge != nil {
 		httpResp.Body = basispointsBridge.Stream(httpResp.Body)

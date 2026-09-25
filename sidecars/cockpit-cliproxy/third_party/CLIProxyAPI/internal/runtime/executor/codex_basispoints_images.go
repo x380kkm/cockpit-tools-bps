@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/basispoints"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/basispoints/imagehost"
@@ -18,14 +19,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// basispointsTunnelStartup 是隧道拉起后图片请求仍会等待其就绪的时段。
+const basispointsTunnelStartup = 30 * time.Second
+
 var (
-	basispointsImageHostOnce sync.Once
-	basispointsImageHost     *imagehost.Host
+	basispointsImageHostOnce    sync.Once
+	basispointsImageHost        *imagehost.Host
+	basispointsImageHostStarted time.Time
 )
 
 //// 首次使用时准备图片托管并拉起 cloudflared 隧道 [@x380kkm 2026-09-25] ////
 func codexBasispointsImageHost() *imagehost.Host {
 	basispointsImageHostOnce.Do(func() {
+		basispointsImageHostStarted = time.Now()
 		cloudflared := imagehost.CloudflaredPath()
 		if cloudflared == "" {
 			log.Warn("basispoints image host disabled: cockpit-bps-cloudflared not found next to the sidecar")
@@ -45,8 +51,9 @@ func codexBasispointsImageHost() *imagehost.Host {
 	return basispointsImageHost
 }
 
-//// 把请求体里的内嵌图片换成公网签名链接，并归一 detail 取值 [@x380kkm 2026-09-25] ////
+//// 确保图片隧道已拉起，把请求体里的内嵌图片换成公网签名链接，并归一 detail 取值 [@x380kkm 2026-09-25] ////
 func codexBasispointsHostImages(ctx context.Context, body []byte) []byte {
+	host := codexBasispointsImageHost()
 	converted := 0
 	for _, field := range []string{"content", "output"} {
 		for index := range gjson.GetBytes(body, "input").Array() {
@@ -67,7 +74,7 @@ func codexBasispointsHostImages(ctx context.Context, body []byte) []byte {
 				if !basispoints.IsDataURL(raw) {
 					continue
 				}
-				link, err := publishInlineImage(raw)
+				link, err := publishInlineImage(ctx, host, raw)
 				if err != nil {
 					helps.LogWithRequestID(ctx).Warnf("basispoints: image hosting failed: %v", err)
 					continue
@@ -84,10 +91,9 @@ func codexBasispointsHostImages(ctx context.Context, body []byte) []byte {
 	return body
 }
 
-//// 解码 data URL 并交给图片托管发布 [@x380kkm 2026-09-25] ////
-func publishInlineImage(raw string) (string, error) {
-	host := codexBasispointsImageHost()
-	if host == nil || !host.Ready() {
+//// 解码 data URL 并交给图片托管发布，隧道启动期内先等待其就绪 [@x380kkm 2026-09-25] ////
+func publishInlineImage(ctx context.Context, host *imagehost.Host, raw string) (string, error) {
+	if host == nil || !host.WaitReady(ctx, time.Until(basispointsImageHostStarted.Add(basispointsTunnelStartup))) {
 		return "", fmt.Errorf("Basispoints image host is not configured; embedded images cannot become HTTPS links")
 	}
 	comma := strings.IndexByte(raw, ',')

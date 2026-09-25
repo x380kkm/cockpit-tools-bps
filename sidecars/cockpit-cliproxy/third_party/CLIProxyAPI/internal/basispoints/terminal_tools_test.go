@@ -51,10 +51,9 @@ func TestTerminalValidationDoesNotDispatchPartialOrMixedTools(t *testing.T) {
 	invalid := nativeCall(object{"name": "other", "arguments": object{}})
 	invalid["id"], invalid["call_id"] = "fc_other", "call_other"
 	// A completed payload that omits the tool item is restored from the done
-	// event (see recovery_test.go); mixed, incomplete and failed responses never
+	// event (see recovery_test.go); incomplete and failed responses never
 	// dispatch anything.
 	for _, terminal := range []object{
-		{"type": "response.completed", "response": object{"output": []any{valid, invalid}}},
 		{"type": "response.incomplete", "response": object{"output": []any{valid}}},
 		{"type": "response.failed", "response": object{"output": []any{valid}, "error": object{"code": "upstream_failure"}}},
 	} {
@@ -66,5 +65,14 @@ func TestTerminalValidationDoesNotDispatchPartialOrMixedTools(t *testing.T) {
 		if err != nil || bytes.Contains(out, []byte("response.function_call_arguments")) || bytes.Contains(out, []byte("run_officejs")) {
 			t.Fatalf("invalid response exposed a tool call: %s, %v", out, err)
 		}
+	}
+	// A completed response mixing a declared call with an undeclared one relays both.
+	_, bridge := mustPrepare(t, source, "", nil)
+	wire := sse(object{"type": "response.completed", "response": object{"output": []any{valid, invalid}}})
+	body := bridge.Stream(io.NopCloser(strings.NewReader(wire)))
+	out, err := io.ReadAll(body)
+	_ = body.Close()
+	if err != nil || !bytes.Contains(out, []byte(`"name":"shell"`)) || !bytes.Contains(out, []byte(`"name":"other"`)) || bytes.Contains(out, []byte("run_officejs")) {
+		t.Fatalf("mixed response must relay the declared and the undeclared call: %s, %v", out, err)
 	}
 }

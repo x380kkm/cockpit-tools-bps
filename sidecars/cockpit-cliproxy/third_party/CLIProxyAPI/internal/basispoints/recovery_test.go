@@ -251,7 +251,7 @@ func TestNativeToolLeakDroppedWhenTextAnswersTheTurn(t *testing.T) {
 	if output, _ := completed["output"].([]any); len(output) != 1 {
 		t.Fatalf("completed output must keep only the message: %+v", completed["output"])
 	}
-	if !strings.Contains(logs.String(), "dropped_native_tool count=2 tools=read_ranges,run_officejs") {
+	if !strings.Contains(logs.String(), "dropped_undeclared_tool count=2 tools=read_ranges,search_workbook") {
 		t.Fatalf("dropped tool names not logged: %s", logs.String())
 	}
 	if strings.Contains(logs.String(), "PRIVATE_") {
@@ -259,7 +259,7 @@ func TestNativeToolLeakDroppedWhenTextAnswersTheTurn(t *testing.T) {
 	}
 }
 
-func TestNativeToolLeakStillFailsWithoutTextOrBesideRealCalls(t *testing.T) {
+func TestNativeToolLeakRelaysWithoutTextOrBesideRealCalls(t *testing.T) {
 	bridge, _ := recoveryBridge(t, object{"type": "function", "name": "shell", "parameters": object{"type": "object"}})
 	leak := object{"type": "function_call", "id": "fc_leak", "call_id": "call_leak", "name": "read_ranges", "arguments": `{}`, "status": "completed"}
 	valid := nativeCall(object{"name": "shell", "arguments": object{"command": []any{"ls"}}})
@@ -278,18 +278,18 @@ func TestNativeToolLeakStillFailsWithoutTextOrBesideRealCalls(t *testing.T) {
 			}
 			wire += sse(object{"type": "response.completed", "response": object{"output": output}})
 			out, _ := streamOutput(t, bridge, wire)
-			if !bytes.Contains(out, []byte("response.failed")) || !bytes.Contains(out, []byte("basispoints_protocol_error")) || bytes.Contains(out, []byte("response.function_call_arguments")) {
-				t.Fatalf("leak without a text answer must still fail without dispatching: %s", out)
+			if bytes.Contains(out, []byte("response.failed")) || !bytes.Contains(out, []byte(`"name":"read_ranges"`)) || !bytes.Contains(out, []byte(`"call_id":"call_leak"`)) {
+				t.Fatalf("leak without a text answer must reach the client as an undeclared call: %s", out)
 			}
 		})
 	}
-	// A malformed call to a real client tool is a bridge bug signal, not a leak.
+	// A malformed call to a real client tool ends the turn with a notice instead.
 	broken := transportCall(`I will run the command`, "Run")
 	wire := sse(object{"type": "response.output_item.done", "output_index": 0, "item": message}) +
 		sse(object{"type": "response.output_item.done", "output_index": 1, "item": broken}) +
 		sse(object{"type": "response.completed", "response": object{"output": []any{message, broken}}})
-	if out, _ := streamOutput(t, bridge, wire); !bytes.Contains(out, []byte("response.failed")) {
-		t.Fatalf("malformed envelope must keep failing: %s", out)
+	if out, _ := streamOutput(t, bridge, wire); bytes.Contains(out, []byte("response.failed")) || !bytes.Contains(out, []byte(noticeMessageID)) {
+		t.Fatalf("malformed envelope must end with a notice: %s", out)
 	}
 }
 

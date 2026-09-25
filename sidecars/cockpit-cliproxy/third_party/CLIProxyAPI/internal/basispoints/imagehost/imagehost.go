@@ -9,6 +9,7 @@
 package imagehost
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -33,6 +34,8 @@ const (
 	assetTTL = 24 * time.Hour
 	// maxImageBytes 是单张图片解码后的大小上限。
 	maxImageBytes = 10 << 20
+	// readyPollInterval 是等待隧道就绪时两次检查的间隔。
+	readyPollInterval = 250 * time.Millisecond
 )
 
 // Host 提供图片落盘、签名链接与本地服务。零值不可用，须经 New 创建。
@@ -81,6 +84,19 @@ func (h *Host) Ready() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.baseURL != ""
+}
+
+//// 在给定时长内等待隧道就绪，时长耗尽或上下文结束时返回当时的就绪状态 [@x380kkm 2026-09-25] ////
+func (h *Host) WaitReady(ctx context.Context, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for !h.Ready() && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return h.Ready()
+		case <-time.After(readyPollInterval):
+		}
+	}
+	return h.Ready()
 }
 
 //// 按内容哈希保存图片并返回公网签名链接 [@x380kkm 2026-09-25] ////

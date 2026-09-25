@@ -75,7 +75,7 @@ func TestAgentMessageBecomesUserMessage(t *testing.T) {
 	}
 }
 
-//// 扣留工具参数事件时写出 SSE 保活注释 [@x380kkm 2026-09-25] ////
+//// 扣留工具参数事件时写出 response.in_progress 保活事件 [@x380kkm 2026-09-25] ////
 func TestKeepaliveWhileWithholdingToolEvents(t *testing.T) {
 	previous := keepaliveInterval
 	keepaliveInterval = 0
@@ -89,7 +89,7 @@ func TestKeepaliveWhileWithholdingToolEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(output), ": keepalive\n\n") || !strings.Contains(string(output), "response.completed") {
-		t.Fatalf("withheld tool events must produce keepalive comments: %s", output)
+	if !strings.Contains(string(output), "event: response.in_progress\n") || !strings.Contains(string(output), "response.completed") {
+		t.Fatalf("withheld tool events must produce in_progress keepalive events: %s", output)
 	}
 }

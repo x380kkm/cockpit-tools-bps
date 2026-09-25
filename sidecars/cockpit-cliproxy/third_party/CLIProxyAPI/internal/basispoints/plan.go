@@ -22,6 +22,9 @@ func (b *Bridge) translateNativePlan(native object) (object, error) {
 			matches++
 		}
 	}
+	if matches == 0 {
+		return nil, undeclaredToolError{name: text(native["name"]), payload: native["arguments"]}
+	}
 	if matches != 1 || selected.Kind != "function" {
 		return nil, fmt.Errorf("Basispoints native update_plan requires one unambiguous client function declaration")
 	}

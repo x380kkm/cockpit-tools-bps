@@ -56,6 +56,9 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 	doneCount := 0
 	toolKey := func(item object) string { return text(item["call_id"]) + "\x00" + text(item["id"]) }
 	lastWrite := time.Now()
+	var snapshot object
+	finished := make([]any, 0)
+	nextIndex := 0
 	emit := func(kind string, payload object) error {
 		payload["type"] = kind
 		payload["sequence_number"] = sequence
@@ -68,14 +71,12 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 		_, err = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", kind, raw)
 		return err
 	}
-	//// 扣留工具事件期间按间隔写出 SSE 注释，维持下游流的活跃 [@x380kkm 2026-09-25] ////
+	//// 扣留工具事件期间按间隔写出 response.in_progress 事件，维持下游流的活跃 [@x380kkm 2026-09-25] ////
 	keepalive := func() error {
 		if time.Since(lastWrite) < keepaliveInterval {
 			return nil
 		}
-		lastWrite = time.Now()
-		_, err := io.WriteString(writer, ": keepalive\n\n")
-		return err
+		return emit("response.in_progress", object{"response": progressSnapshot(snapshot)})
 	}
 	emitTool := func(item object, index any) error {
 		id := text(item["id"])
@@ -114,6 +115,12 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 		kind := text(payload["type"])
 		if kind == "" {
 			kind = event
+		}
+		if response, ok := payload["response"].(object); ok {
+			snapshot = response
+		}
+		if index := outputIndex(payload); index >= nextIndex {
+			nextIndex = index + 1
 		}
 		if isToolEvent(kind) {
 			return keepalive()
@@ -179,6 +186,9 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 				response["reasoning"] = object{"effort": b.Effort}
 			}
 		}
+		if kind == "response.output_item.done" && item != nil {
+			finished = append(finished, item)
+		}
 		terminal = kind == "response.completed" || kind == "response.incomplete" || kind == "response.failed" || kind == "error"
 		return emit(kind, payload)
 	}
@@ -199,10 +209,13 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 		if errors.Is(err, io.ErrClosedPipe) || !errors.As(err, &invalid) {
 			return err
 		}
-		return emit("response.failed", object{"response": object{
-			"status": "failed", "output": []any{},
-			"error": object{"code": "basispoints_protocol_error", "message": ProtocolFailureMessage(err)},
-		}})
+		log.Printf("[Basispoints] stage=stream result=protocol_notice detail=%s", invalid.Error())
+		if sequence == 0 {
+			if err := emit("response.created", object{"response": progressSnapshot(snapshot)}); err != nil {
+				return err
+			}
+		}
+		return emitProtocolNotice(emit, snapshot, finished, nextIndex, invalid.error)
 	}
 	if !terminal {
 		return io.ErrUnexpectedEOF
@@ -213,6 +226,30 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 type pendingTool struct {
 	item  object
 	order int
+}
+
+// progressSnapshot 从最近一次响应对象里取出进度事件需要的标识字段。
+func progressSnapshot(response object) object {
+	progress := object{"id": noticeResponseID, "object": "response", "status": "in_progress"}
+	for _, key := range []string{"id", "object", "created_at", "model"} {
+		if value, ok := response[key]; ok {
+			progress[key] = value
+		}
+	}
+	return progress
+}
+
+// outputIndex 读取事件的 output_index，缺省时返回 -1。
+func outputIndex(payload object) int {
+	number, ok := payload["output_index"].(json.Number)
+	if !ok {
+		return -1
+	}
+	value, err := number.Int64()
+	if err != nil {
+		return -1
+	}
+	return int(value)
 }
 
 // completeOutputFromDoneItems appends tool items the completed payload omitted,

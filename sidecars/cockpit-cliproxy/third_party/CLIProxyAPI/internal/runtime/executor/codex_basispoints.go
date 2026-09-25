@@ -5,7 +5,8 @@
 // 请求全部改发到 ChatGPT for Excel 插件的上游 `basispoints.ResponsesURL`，不改用原 Codex 上游：
 // 请求体由 `basispoints.Prepare` 改写，客户端工具经原生 `run_officejs` 转运，上游事件流由
 // `Bridge.Stream` 翻译回 Codex SSE，之后沿用执行器原有的流处理。
-// 请求含有无法转发的内容时，改写阶段返回一条说明该限制的助手消息，本轮不发往任何上游。
+// 请求含有无法转发的内容时，改写阶段返回一条说明该限制的助手消息，本轮不发往任何上游；
+// 上游以 400 或模型不可用的 403 拒绝请求时同样改回说明消息，其余错误状态照常交给号池处理。
 // 前提：凭据带有 access_token 与 account_id；API Key 凭据不走此通道。
 package executor
 
@@ -87,6 +88,21 @@ func newCodexBasispointsPlan(ctx context.Context, auth *cliproxyauth.Auth, model
 	header.Set("Accept", "text/event-stream")
 	helps.LogWithRequestID(ctx).Infof("basispoints: auth=%s route=basispoints model=%s requested_effort=%s effective_effort=%s", auth.ID, gjson.GetBytes(upstreamBody, "model").String(), bridge.RequestedEffort, bridge.Effort)
 	return &basispointsPlan{request: httpReq, body: upstreamBody, bridge: bridge}, nil
+}
+
+//// 把 Excel 上游对请求本身的拒绝换成说明消息流；账号级错误返回 nil，交给号池冷却或刷新 [@x380kkm 2026-09-25] ////
+func codexBasispointsRejectionNotice(ctx context.Context, model string, status int, body []byte) io.ReadCloser {
+	text, ok := basispoints.RejectionNoticeText(model, status, body)
+	if !ok {
+		return nil
+	}
+	helps.LogWithRequestID(ctx).Warnf("basispoints: route=notice category=upstream_rejection status=%d", status)
+	return basispoints.NoticeStream(model, text)
+}
+
+// codexBasispointsNoticeResponse 把说明消息流包装成一个成功的 SSE 响应。
+func codexBasispointsNoticeResponse(notice io.ReadCloser) *http.Response {
+	return &http.Response{StatusCode: http.StatusOK, Body: notice, Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
 }
 
 //// 从客户端请求头取显式会话标识 [@x380kkm 2026-09-25] ////

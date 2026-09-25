@@ -34,6 +34,10 @@ func (e *CodexExecutor) executeBasispointsCompact(ctx context.Context, auth *cli
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(httpResp.Body)
+		if rejection := codexBasispointsRejectionNotice(ctx, model, httpResp.StatusCode, payload); rejection != nil {
+			defer func() { _ = rejection.Close() }()
+			return collectBasispointsResponse(rejection)
+		}
 		return nil, newCodexStatusErrWithCooling(httpResp.StatusCode, payload, e.modelLevelCooling())
 	}
 	return collectBasispointsResponse(plan.bridge.Stream(httpResp.Body))
