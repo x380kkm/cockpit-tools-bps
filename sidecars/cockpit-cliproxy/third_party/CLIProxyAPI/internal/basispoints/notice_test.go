@@ -17,6 +17,10 @@ func TestRejectionNoticeTextSeparatesRequestAndAccountErrors(t *testing.T) {
 	if text, ok := RejectionNoticeText("gpt-6-astra", 400, invalid); !ok || !strings.Contains(text, "Invalid 'input[9].id'.") {
 		t.Fatalf("invalid request must quote the upstream message: %q, %v", text, ok)
 	}
+	download := []byte(`{"error":{"message":"Unable to download content from the provided URL before the timeout."}}`)
+	if text, ok := RejectionNoticeText("gpt-6-astra", 400, download); !ok || !strings.Contains(text, "下载完会话里的图片") || !IsImageDownloadTimeout(download) {
+		t.Fatalf("image download timeout must get its own explanation: %q, %v", text, ok)
+	}
 	if text, ok := RejectionNoticeText("gpt-6-astra", 400, []byte("plain failure")); !ok || !strings.Contains(text, "plain failure") {
 		t.Fatalf("non-JSON rejection must quote the raw body: %q, %v", text, ok)
 	}

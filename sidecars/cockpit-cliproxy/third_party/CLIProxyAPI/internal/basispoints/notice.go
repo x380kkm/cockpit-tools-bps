@@ -102,6 +102,14 @@ func ProtocolNoticeText(err error) string {
 // modelAccessCode 是 Excel 上游拒绝当前账号使用所请求模型时返回的错误码。
 const modelAccessCode = "basispoints_model_access_changed"
 
+// imageDownloadTimeout 是 Excel 上游没能在时限内下载完请求里的图片时，错误信息开头的原文。
+const imageDownloadTimeout = "Unable to download content from the provided URL"
+
+//// 判断上游拒绝是否因为没能在时限内下载完图片 [@x380kkm 2026-09-26] ////
+func IsImageDownloadTimeout(body []byte) bool {
+	return strings.Contains(string(body), imageDownloadTimeout)
+}
+
 // maxRejectionDetail 是提示文字里引用上游原始错误的最大字节数。
 const maxRejectionDetail = 600
 
@@ -121,6 +129,9 @@ func RejectionNoticeText(model string, status int, body []byte) (string, bool) {
 	case status == http.StatusForbidden && text(detail["code"]) == modelAccessCode:
 		return "【Basispoints】该账号的 Excel 通道不提供模型 " + model + "，本次请求没有执行。请在客户端切换到其他模型后重试。" +
 			"\n\n该账号已开启 Excel 通道，不会改用原 Codex 上游。（" + message + "）", true
+	case status == http.StatusBadRequest && IsImageDownloadTimeout(body):
+		return "【Basispoints】Excel 上游没能在时限内经隧道下载完会话里的图片，已自动重试仍未成功，本次没有执行任何操作。" +
+			"\n\n可以直接回复“继续”再试；如果反复出现，说明会话里累积的图片太多，建议新建会话。（" + message + "）", true
 	case status == http.StatusBadRequest:
 		return "【Basispoints】Excel 上游拒绝了本次请求，没有执行任何操作：" + message +
 			"\n\n会话可以继续；如果每次都出现同一条说明，请新建会话。", true

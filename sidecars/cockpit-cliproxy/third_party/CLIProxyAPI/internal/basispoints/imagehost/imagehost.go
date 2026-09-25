@@ -2,7 +2,8 @@
 // # imagehost
 //
 // Basispoints 内嵌图片的公网托管。Excel 上游只接受由它自己抓取的 HTTPS 图片链接，
-// 因此本包把请求体里的 data URL 图片按内容哈希落盘，只在回环地址上提供带 HMAC 签名的
+// 因此本包把请求体里的 data URL 图片先按 OpenAI high 细节的有效尺寸缩小，再按内容哈希落盘，
+// 缩小结果按原图内容缓存；只在回环地址上提供带 HMAC 签名的
 // `GET /p/img/<id>`，再由 cloudflared 快速隧道把该端口映射成公网 HTTPS 域名。
 // 签名密钥与隧道域名都保存在内存；进程重启后旧链接失效，图片文件按 TTL 清理。
 // 运行前提：同目录存在 cloudflared 可执行文件，且它能直连 Cloudflare 边缘（代理软件需放行）。
@@ -45,6 +46,8 @@ type Host struct {
 	port    int
 	mu      sync.RWMutex
 	baseURL string
+	// shrunk 把原图内容 ID 映射到缩小后落盘的内容 ID，同一张图只缩小一次。
+	shrunk map[string]string
 }
 
 //// 创建图片托管：准备目录、随机签名密钥并在回环地址启动只读服务 [@x380kkm 2026-09-25] ////
@@ -60,7 +63,7 @@ func New(dir string) (*Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("basispoints image host listener: %w", err)
 	}
-	host := &Host{dir: dir, secret: secret, port: listener.Addr().(*net.TCPAddr).Port}
+	host := &Host{dir: dir, secret: secret, port: listener.Addr().(*net.TCPAddr).Port, shrunk: make(map[string]string)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/p/img/", host.serve)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
@@ -110,19 +113,52 @@ func (h *Host) Publish(payload []byte, mediaType string) (string, error) {
 	if len(payload) == 0 || len(payload) > maxImageBytes {
 		return "", errors.New("Basispoints embedded image exceeds the 10MB limit")
 	}
-	sum := sha256.Sum256(payload)
-	id := hex.EncodeToString(sum[:16])
-	path := filepath.Join(h.dir, id)
-	if _, err := os.Stat(path); err != nil {
-		if err := writeFileAtomic(path, payload); err != nil {
-			return "", fmt.Errorf("Basispoints image host could not store an image: %w", err)
-		}
-	}
-	if err := os.WriteFile(path+".type", []byte(mediaType), 0o600); err != nil {
+	id, err := h.storeShrunk(payload, mediaType)
+	if err != nil {
 		return "", fmt.Errorf("Basispoints image host could not store an image: %w", err)
 	}
 	expiry := time.Now().Add(linkTTL).Truncate(linkTTL).Unix()
 	return fmt.Sprintf("%s/p/img/%s?exp=%d&sig=%s", baseURL, id, expiry, h.sign(id, expiry)), nil
+}
+
+// maxShrunkEntries 是原图到缩小图映射的条目上限，超过时整体清空重建。
+const maxShrunkEntries = 4096
+
+//// 按原图查找已缩小落盘的条目，没有则缩小后落盘并记录映射，返回落盘内容 ID [@x380kkm 2026-09-26] ////
+func (h *Host) storeShrunk(payload []byte, mediaType string) (string, error) {
+	original := contentID(payload)
+	h.mu.RLock()
+	id, known := h.shrunk[original]
+	h.mu.RUnlock()
+	if known {
+		if _, err := os.Stat(filepath.Join(h.dir, id)); err == nil {
+			return id, nil
+		}
+	}
+	payload, mediaType = Shrink(payload, mediaType)
+	id = contentID(payload)
+	path := filepath.Join(h.dir, id)
+	if _, err := os.Stat(path); err != nil {
+		if err := writeFileAtomic(path, payload); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(path+".type", []byte(mediaType), 0o600); err != nil {
+		return "", err
+	}
+	h.mu.Lock()
+	if len(h.shrunk) >= maxShrunkEntries {
+		h.shrunk = make(map[string]string)
+	}
+	h.shrunk[original] = id
+	h.mu.Unlock()
+	return id, nil
+}
+
+// contentID 是图片内容 SHA-256 的前 16 字节十六进制，用作落盘文件名。
+func contentID(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:16])
 }
 
 //// 校验签名后返回图片，支持 GET 与 HEAD [@x380kkm 2026-09-25] ////

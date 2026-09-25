@@ -6,7 +6,8 @@
 // 请求体由 `basispoints.Prepare` 改写，客户端工具经原生 `run_officejs` 转运，上游事件流由
 // `Bridge.Stream` 翻译回 Codex SSE，之后沿用执行器原有的流处理。
 // 请求含有无法转发的内容时，改写阶段返回一条说明该限制的助手消息，本轮不发往任何上游；
-// 上游以 400 或模型不可用的 403 拒绝请求时同样改回说明消息，其余错误状态照常交给号池处理。
+// 上游以 400 或模型不可用的 403 拒绝请求时同样改回说明消息，其余错误状态照常交给号池处理；
+// 其中上游没能在时限内下载完图片的 400 先用同一请求体重发，仍失败才改回说明消息。
 // 前提：凭据带有 access_token 与 account_id；API Key 凭据不走此通道。
 package executor
 
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/basispoints"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
@@ -88,6 +90,41 @@ func newCodexBasispointsPlan(ctx context.Context, auth *cliproxyauth.Auth, model
 	header.Set("Accept", "text/event-stream")
 	helps.LogWithRequestID(ctx).Infof("basispoints: auth=%s route=basispoints model=%s requested_effort=%s effective_effort=%s", auth.ID, gjson.GetBytes(upstreamBody, "model").String(), bridge.RequestedEffort, bridge.Effort)
 	return &basispointsPlan{request: httpReq, body: upstreamBody, bridge: bridge}, nil
+}
+
+// basispointsDownloadRetries 是 Excel 上游下载图片超时后重发同一请求的最多次数。
+const basispointsDownloadRetries = 2
+
+// basispointsDownloadRetryDelay 是两次重发之间的等待时长。
+var basispointsDownloadRetryDelay = 2 * time.Second
+
+// httpDoer 是发送单个 HTTP 请求的客户端。
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+//// 发送 Basispoints 请求；上游因下载图片超时拒绝时用同一请求体重发 [@x380kkm 2026-09-26] ////
+func codexBasispointsSend(ctx context.Context, client httpDoer, request *http.Request, body []byte) (*http.Response, error) {
+	for attempt := 1; ; attempt++ {
+		response, err := client.Do(request)
+		if err != nil || response.StatusCode != http.StatusBadRequest || attempt > basispointsDownloadRetries {
+			return response, err
+		}
+		data, errRead := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		response.Body = io.NopCloser(bytes.NewReader(data))
+		if errRead != nil || !basispoints.IsImageDownloadTimeout(data) {
+			return response, nil
+		}
+		helps.LogWithRequestID(ctx).Warnf("basispoints: upstream image download timed out, retry=%d/%d", attempt, basispointsDownloadRetries)
+		select {
+		case <-ctx.Done():
+			return response, nil
+		case <-time.After(basispointsDownloadRetryDelay):
+		}
+		request = request.Clone(ctx)
+		request.Body = io.NopCloser(bytes.NewReader(body))
+	}
 }
 
 //// 把 Excel 上游对请求本身的拒绝换成说明消息流；账号级错误返回 nil，交给号池冷却或刷新 [@x380kkm 2026-09-25] ////

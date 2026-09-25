@@ -27,7 +27,7 @@ func (e *CodexExecutor) executeBasispointsCompact(ctx context.Context, auth *cli
 		return collectBasispointsResponse(plan.notice)
 	}
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
-	httpResp, err := httpClient.Do(plan.request)
+	httpResp, err := codexBasispointsSend(ctx, httpClient, plan.request, plan.body)
 	if err != nil {
 		return nil, err
 	}

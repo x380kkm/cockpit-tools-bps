@@ -159,7 +159,11 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	} else {
 		httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
 		httpClient = reporter.TrackHTTPClientRoundTripOnly(httpClient)
-		httpResp, err = httpClient.Do(httpReq)
+		if useBasispoints {
+			httpResp, err = codexBasispointsSend(ctx, httpClient, httpReq, upstreamBody)
+		} else {
+			httpResp, err = httpClient.Do(httpReq)
+		}
 		if err != nil {
 			helps.RecordAPIResponseError(ctx, e.cfg, err)
 			return nil, err
